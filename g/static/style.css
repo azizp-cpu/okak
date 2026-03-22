@@ -58,6 +58,21 @@ button:hover {
     margin: 10px 0;
 }
 
+.container {
+    display: flex;
+}
+
+.feed {
+    width: 70%;
+}
+
+.sidebar {
+    width: 30%;
+    background: #1a1a2e;
+    padding: 20px;
+    height: 100vh;
+}
+
 .like-btn {
     color: #bb86fc;
     text-decoration: none;
