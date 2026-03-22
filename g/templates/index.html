@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="/static/style.css">
+    <title>Соцсеть</title>
+</head>
+<body>
+
+<h2>Лента</h2>
+
+<form method="POST" enctype="multipart/form-data">
+    <textarea name="text" placeholder="Что у тебя нового?"></textarea><br>
+
+    Цвет: <input type="color" name="color"><br>
+    Размер: <input type="number" name="size" value="20"><br>
+
+    Шрифт:
+    <select name="font">
+        <option value="Arial">Arial</option>
+        <option value="Courier">Courier</option>
+        <option value="Times New Roman">Times</option>
+    </select><br>
+
+    Фото: <input type="file" name="image"><br>
+
+    <button>Опубликовать</button>
+</form>
+
+<hr>
+
+{% for post in posts %}
+<div class="post">
+
+    <!-- Ссылка на профиль автора -->
+    <b><a href="/profile/{{post[1]}}" style="color:#bb86fc; text-decoration:none;">{{post[1]}}</a></b>
+
+    <!-- Текст поста -->
+    <p style="color:{{post[3]}}; font-size:{{post[4]}}px; font-family:{{post[5]}}">
+        {{post[2]}}
+    </p>
+
+    <!-- Фото поста -->
+    {% if post[6] %}
+    <img src="/static/uploads/{{post[6]}}" class="post-img">
+    {% endif %}
+
+    <!-- Лайк -->
+    <a href="/like/{{post[0]}}" class="like-btn">
+        {% if user_likes[post[0]] %}
+            💜 {{likes[post[0]]}} (убрать)
+        {% else %}
+            🤍 {{likes[post[0]]}} (лайк)
+        {% endif %}
+    </a>
+
+    <!-- Комментарии -->
+    <div class="comments">
+        {% for comment in comments[post[0]] %}
+            <p><b>{{comment[0]}}</b>: {{comment[1]}}</p>
+        {% endfor %}
+    </div>
+
+    <!-- Форма комментария -->
+    <form action="/comment/{{post[0]}}" method="POST">
+        <input name="text" placeholder="Комментарий...">
+    </form>
+
+</div>
+{% endfor %}
+
+<a href="/logout" style="color:#bb86fc;">Выйти</a>
+
+</body>
+</html>
