@@ -15,12 +15,11 @@ ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# --- БАЗА ДАННЫХ ---
+# --- БАЗА ---
 def init_db():
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
 
-    # таблица пользователей с аватаркой
     c.execute("""CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY,
         username TEXT,
@@ -51,6 +50,13 @@ def init_db():
         text TEXT
     )""")
 
+    # ✅ подписки
+    c.execute("""CREATE TABLE IF NOT EXISTS follows (
+        id INTEGER PRIMARY KEY,
+        follower TEXT,
+        following TEXT
+    )""")
+
     conn.commit()
     conn.close()
 
@@ -65,6 +71,7 @@ def index():
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
 
+    # создание поста
     if request.method == "POST":
         text = request.form["text"]
         color = request.form["color"]
@@ -78,27 +85,51 @@ def index():
             filename = secure_filename(image.filename)
             image.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
 
-        c.execute("INSERT INTO posts (user, text, color, size, font, image) VALUES (?, ?, ?, ?, ?, ?)",
+        c.execute("INSERT INTO posts VALUES (NULL,?,?,?,?,?,?)",
                   (session["user"], text, color, size, font, filename))
         conn.commit()
 
-    c.execute("SELECT * FROM posts ORDER BY id DESC")
-    posts = c.fetchall()
+    # --- популярные ---
+    c.execute("""
+    SELECT posts.id, posts.user, posts.text, posts.color, posts.size, posts.font, posts.image, COUNT(likes.id) as like_count
+    FROM posts
+    LEFT JOIN likes ON posts.id = likes.post_id
+    GROUP BY posts.id
+    ORDER BY like_count DESC
+    """)
+    popular = c.fetchall()
 
+    # --- новые ---
+    c.execute("SELECT * FROM posts ORDER BY id DESC")
+    new = c.fetchall()
+
+    # --- смешанный алгоритм ---
+    posts = []
+    for i in range(max(len(popular), len(new))):
+        if i < len(popular):
+            posts.append(popular[i])
+        if i < len(new):
+            posts.append(new[i])
+
+    # лайки / комментарии
     likes = {}
     user_likes = {}
     comments = {}
+
     for post in posts:
-        c.execute("SELECT COUNT(*) FROM likes WHERE post_id=?", (post[0],))
-        likes[post[0]] = c.fetchone()[0]
+        post_id = post[0]
 
-        c.execute("SELECT 1 FROM likes WHERE post_id=? AND user=?", (post[0], session["user"]))
-        user_likes[post[0]] = c.fetchone() is not None
+        c.execute("SELECT COUNT(*) FROM likes WHERE post_id=?", (post_id,))
+        likes[post_id] = c.fetchone()[0]
 
-        c.execute("SELECT user, text FROM comments WHERE post_id=?", (post[0],))
-        comments[post[0]] = c.fetchall()
+        c.execute("SELECT 1 FROM likes WHERE post_id=? AND user=?", (post_id, session["user"]))
+        user_likes[post_id] = c.fetchone() is not None
+
+        c.execute("SELECT user, text FROM comments WHERE post_id=?", (post_id,))
+        comments[post_id] = c.fetchall()
 
     conn.close()
+
     return render_template("index.html", posts=posts, likes=likes, comments=comments, user_likes=user_likes)
 
 # --- ЛАЙК ---
@@ -120,9 +151,9 @@ def like(post_id):
         return redirect("/")
 
     c.execute("SELECT * FROM likes WHERE post_id=? AND user=?", (post_id, user))
-    already_liked = c.fetchone()
+    liked = c.fetchone()
 
-    if already_liked:
+    if liked:
         c.execute("DELETE FROM likes WHERE post_id=? AND user=?", (post_id, user))
     else:
         c.execute("INSERT INTO likes (post_id, user) VALUES (?, ?)", (post_id, user))
@@ -131,43 +162,49 @@ def like(post_id):
     conn.close()
     return redirect("/")
 
-# --- КОММЕНТАРИЙ ---
+# --- КОММЕНТ ---
 @app.route("/comment/<int:post_id>", methods=["POST"])
 def comment(post_id):
     if "user" not in session:
         return redirect("/login")
 
     text = request.form["text"]
+
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
-    c.execute("INSERT INTO comments (post_id, user, text) VALUES (?, ?, ?)",
+
+    c.execute("INSERT INTO comments VALUES (NULL,?,?,?)",
               (post_id, session["user"], text))
+
     conn.commit()
     conn.close()
     return redirect("/")
 
-# --- ПРОФИЛЬ ---
-@app.route("/profile/<username>", methods=["GET", "POST"])
-def profile(username):
+# --- ПОДПИСКА ---
+@app.route("/follow/<username>")
+def follow(username):
+    if "user" not in session:
+        return redirect("/login")
+
+    user = session["user"]
+
+    if user == username:
+        return redirect("/")
+
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE username=?", (username,))
-    user = c.fetchone()
 
-    c.execute("SELECT * FROM posts WHERE user=? ORDER BY id DESC", (username,))
-    posts = c.fetchall()
+    c.execute("SELECT * FROM follows WHERE follower=? AND following=?", (user, username))
+    exists = c.fetchone()
 
-    # загрузка аватарки
-    if request.method == "POST" and "user" in session and session["user"] == username:
-        avatar = request.files.get("avatar")
-        if avatar and allowed_file(avatar.filename):
-            filename = secure_filename(avatar.filename)
-            avatar.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
-            c.execute("UPDATE users SET avatar=? WHERE username=?", (filename, username))
-            conn.commit()
+    if exists:
+        c.execute("DELETE FROM follows WHERE follower=? AND following=?", (user, username))
+    else:
+        c.execute("INSERT INTO follows (follower, following) VALUES (?, ?)", (user, username))
 
+    conn.commit()
     conn.close()
-    return render_template("profile.html", user=user, posts=posts)
+    return redirect("/")
 
 # --- ЛОГИН ---
 @app.route("/login", methods=["GET", "POST"])
@@ -178,11 +215,9 @@ def login():
 
         conn = sqlite3.connect("database.db")
         c = conn.cursor()
-        c.execute("SELECT * FROM users WHERE username=? AND password=?", (user, password))
-        result = c.fetchone()
-        conn.close()
 
-        if result:
+        c.execute("SELECT * FROM users WHERE username=? AND password=?", (user, password))
+        if c.fetchone():
             session["user"] = user
             return redirect("/")
 
@@ -197,9 +232,11 @@ def register():
 
         conn = sqlite3.connect("database.db")
         c = conn.cursor()
-        c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (user, password))
+
+        c.execute("INSERT INTO users VALUES (NULL,?,?,NULL)", (user, password))
         conn.commit()
         conn.close()
+
         return redirect("/login")
 
     return render_template("register.html")
